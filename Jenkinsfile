@@ -1,14 +1,17 @@
 pipeline {
-  agent none
+  agent {
+    dockerfile {
+      filename 'agent/Dockerfile'
+      args '-v /var/run/docker.sock:/var/run/docker.sock -v /root/.m2:/root/.m2 -u root'
+    }
+  }
 
   environment {
-    IMAGE_NAME = "alvirra/paymybuddy"
+    IMAGE_NAME = 'alvirra/paymybuddy'
     IMAGE_TAG = "${env.BUILD_NUMBER}"
     FULL_IMAGE = "${IMAGE_NAME}:${IMAGE_TAG}"
-    STAGING_HOST = "56.228.41.32"
-    PROD_HOST = "13.60.222.9"
-    SONAR_PROJECT_KEY = "alvirranyadja"
-    SONAR_ORGANIZATION = "alvirranyadja"
+    STAGING_HOST = '56.228.41.32'
+    PROD_HOST = '13.60.222.9'
   }
 
   options {
@@ -20,12 +23,6 @@ pipeline {
   stages {
 
     stage('Tests Automatisés') {
-      agent {
-        docker {
-          image 'maven:3.9-eclipse-temurin-17'
-          args '-v $HOME/.m2:/root/.m2'
-        }
-      }
       steps {
         sh 'mvn -B clean test'
       }
@@ -37,26 +34,14 @@ pipeline {
     }
 
     stage('Qualité SonarCloud') {
-      agent {
-        docker {
-          image 'maven:3.9-eclipse-temurin-17'
-          args '-v $HOME/.m2:/root/.m2'
-        }
-      }
       steps {
         withSonarQubeEnv('SonarCloud') {
-          sh '''
-            mvn -B verify sonar:sonar \
-              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-              -Dsonar.organization=${SONAR_ORGANIZATION} \
-              -Dsonar.host.url=https://sonarcloud.io
-          '''
+          sh 'mvn -B verify sonar:sonar -s .m2/settings.xml -DskipTests'
         }
       }
     }
 
     stage('Quality Gate') {
-      agent any
       steps {
         timeout(time: 3, unit: 'MINUTES') {
           waitForQualityGate abortPipeline: false
@@ -65,12 +50,6 @@ pipeline {
     }
 
     stage('Compilation et Packaging') {
-      agent {
-        docker {
-          image 'maven:3.9-eclipse-temurin-17'
-          args '-v $HOME/.m2:/root/.m2'
-        }
-      }
       steps {
         sh 'mvn -B clean package -DskipTests'
         archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -78,15 +57,10 @@ pipeline {
     }
 
     stage('Build & Push DockerHub') {
-      agent {
-        docker {
-          image 'docker:27'
-          args '-v /var/run/docker.sock:/var/run/docker.sock -u root'
-        }
-      }
       steps {
         withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USR', passwordVariable: 'DOCKERHUB_PSW')]) {
           sh '''
+            set -e
             echo "$DOCKERHUB_PSW" | docker login -u "$DOCKERHUB_USR" --password-stdin
             docker build -t ${FULL_IMAGE} -t ${IMAGE_NAME}:latest .
             docker push ${FULL_IMAGE}
@@ -98,16 +72,7 @@ pipeline {
 
     stage('Staging') {
       when {
-        anyOf {
-          branch 'main'
-          expression { return (env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main') }
-        }
-      }
-      agent {
-        docker {
-          image 'alpine:3.20'
-          args '-u root'
-        }
+        expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
       steps {
         withCredentials([
@@ -115,10 +80,10 @@ pipeline {
           sshUserPrivateKey(credentialsId: 'ssh-deploy', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
         ]) {
           sh '''
-            apk add --no-cache openssh-client bash
+            set -e
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
-            ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts
+            ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
             ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${STAGING_HOST} "mkdir -p ~/paymybuddy-deploy"
             scp deploy/docker-compose.yml ${SSH_USER}@${STAGING_HOST}:~/paymybuddy-deploy/docker-compose.yml
@@ -141,38 +106,20 @@ pipeline {
 
     stage('Validation Staging') {
       when {
-        anyOf {
-          branch 'main'
-          expression { return (env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main') }
-        }
-      }
-      agent {
-        docker {
-          image 'alpine:3.20'
-          args '-u root'
-        }
+        expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
       steps {
         sh '''
-          apk add --no-cache curl
+          set -e
           chmod +x scripts/validate.sh
-          APP_URL="http://${STAGING_HOST}:8080/" ./scripts/validate.sh
+          APP_URL="http://${STAGING_HOST}:8080/" RETRIES=30 SLEEP_SECONDS=10 ./scripts/validate.sh
         '''
       }
     }
 
     stage('Production') {
       when {
-        anyOf {
-          branch 'main'
-          expression { return (env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main') }
-        }
-      }
-      agent {
-        docker {
-          image 'alpine:3.20'
-          args '-u root'
-        }
+        expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
       steps {
         input message: "Déployer en PRODUCTION sur ${PROD_HOST} ?", ok: 'Déployer'
@@ -181,10 +128,10 @@ pipeline {
           sshUserPrivateKey(credentialsId: 'ssh-deploy', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
         ]) {
           sh '''
-            apk add --no-cache openssh-client bash
+            set -e
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
-            ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts
+            ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
             ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${PROD_HOST} "mkdir -p ~/paymybuddy-deploy"
             scp deploy/docker-compose.yml ${SSH_USER}@${PROD_HOST}:~/paymybuddy-deploy/docker-compose.yml
@@ -207,22 +154,13 @@ pipeline {
 
     stage('Validation Production') {
       when {
-        anyOf {
-          branch 'main'
-          expression { return (env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main') }
-        }
-      }
-      agent {
-        docker {
-          image 'alpine:3.20'
-          args '-u root'
-        }
+        expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
       steps {
         sh '''
-          apk add --no-cache curl
+          set -e
           chmod +x scripts/validate.sh
-          APP_URL="http://${PROD_HOST}:8080/" ./scripts/validate.sh
+          APP_URL="http://${PROD_HOST}:8080/" RETRIES=30 SLEEP_SECONDS=10 ./scripts/validate.sh
         '''
       }
     }
@@ -230,10 +168,10 @@ pipeline {
 
   post {
     always {
-      node {
-        script {
-          def status = currentBuild.currentResult
-          def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'N/A'
+      script {
+        def status = currentBuild.currentResult
+        def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'N/A'
+        try {
           withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
             sh """
               curl -sS -X POST -H 'Content-type: application/json' \
@@ -241,9 +179,10 @@ pipeline {
                 "\$SLACK_WEBHOOK" || true
             """
           }
+        } catch (err) {
+          echo "Notification Slack ignorée: ${err}"
         }
       }
     }
   }
 }
-
