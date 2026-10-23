@@ -1,0 +1,10 @@
+.git
+.idea
+*.iml
+target
+**/target
+README.md
+scripts
+deploy
+sonar-project.properties
+Jenkinsfile

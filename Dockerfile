@@ -1,15 +1,18 @@
-FROM amazoncorretto:17-alpine
-
-ARG JAR_FILE=target/paymybuddy.jar
-
+# Build
+FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn -B -DskipTests package
 
-COPY ${JAR_FILE} paymybuddy.jar
+# Runtime
+FROM amazoncorretto:17-alpine
+WORKDIR /app
+COPY --from=build /app/target/paymybuddy.jar paymybuddy.jar
 
+ENV SPRING_DATASOURCE_URL=jdbc:mysql://paymybuddydb:3306/db_paymybuddy
 ENV SPRING_DATASOURCE_USERNAME=root
-
 ENV SPRING_DATASOURCE_PASSWORD=password
 
-ENV SPRING_DATASOURCE_URL=jdbc:mysql://172.17.0.1:3306/db_paymybuddy
-
-CMD ["java", "-jar" , "paymybuddy.jar"]
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "paymybuddy.jar"]
