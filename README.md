@@ -6,7 +6,7 @@ Pipeline Jenkins pour l’application Spring Boot [PayMyBuddy](https://github.co
 
 | Élément | Valeur |
 |---------|--------|
-| Jenkins | `http://<IP_EC2_JENKINS>:8080` |
+| Jenkins | http://16.171.8.117:8080 |
 | Staging | `56.228.41.32:8080` |
 | Prod | `13.60.222.9:8080` |
 | Docker Hub | `alvirra/paymybuddy` |
@@ -79,10 +79,45 @@ git push origin main
 | Erreur console | Correctif |
 |----------------|-----------|
 | `permission denied` / `Cannot connect to the Docker daemon` | Sur l’EC2 Jenkins : `sudo chmod 666 /var/run/docker.sock` puis relancer |
-| `docker: not found` dans Jenkins | Installer le CLI Docker dans le conteneur Jenkins (ou monter le socket) |
+| `docker: not found` | Voir section **Docker CLI dans Jenkins** ci-dessous |
 | `withSonarQubeEnv("SonarCloud")` introuvable | Manage Jenkins → System → SonarQube servers : le **Name** doit être exactement `SonarCloud` |
 | Tests / DataSource | Vérifier `src/test/resources/application.properties` (H2) |
 | SSH / Permission denied (publickey) | Credential `ssh-deploy` = clé privée dont la publique est dans `~/.ssh/authorized_keys` sur staging/prod |
 
-- Production demande une validation manuelle (`input`) avant déploiement.
+### Docker CLI dans Jenkins (obligatoire)
+
+Sur l’**EC2 Jenkins** (`16.171.8.117`), le conteneur doit avoir le CLI Docker + le socket :
+
+```bash
+JENKINS_CTR=$(sudo docker ps --format '{{.Names}}' | grep -i jenkins | head -1)
+
+sudo docker exec -u root "$JENKINS_CTR" bash -c '
+  curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.1.1.tgz \
+    | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
+  chmod +x /usr/local/bin/docker
+  docker version
+'
+sudo chmod 666 /var/run/docker.sock
+```
+
+### UI Jenkins très lente (t3.micro)
+
+Le build de `agent/Dockerfile` (image Maven) saturait la RAM. La pipeline utilise maintenant des images Docker Hub prêtes (`maven`, `docker:27-cli`, `alpine`).
+
+Pour débloquer le serveur tout de suite :
+
+```bash
+# Voir la charge
+free -h
+sudo docker stats --no-stream
+
+# Arrêter les builds Docker en cours / images énormes en cours de pull
+sudo docker ps -a
+# Optionnel : redémarrer Jenkins
+sudo docker restart $(sudo docker ps --format '{{.Names}}' | grep -i jenkins | head -1)
+```
+
+Puis pousser le nouveau `Jenkinsfile` et relancer un build.
+
+- Production : validation manuelle (`input`) avant déploiement.
 - Slack : credential `slack-webhook`.

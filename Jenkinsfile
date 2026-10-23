@@ -1,10 +1,6 @@
 pipeline {
-  agent {
-    dockerfile {
-      filename 'agent/Dockerfile'
-      args '-v /var/run/docker.sock:/var/run/docker.sock -v /root/.m2:/root/.m2 -u root'
-    }
-  }
+  // Agent léger : images Docker Hub déjà prêtes (évite de builder agent/Dockerfile sur t3.micro)
+  agent none
 
   environment {
     IMAGE_NAME = 'alvirra/paymybuddy'
@@ -17,12 +13,19 @@ pipeline {
   options {
     timestamps()
     disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '20'))
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    timeout(time: 60, unit: 'MINUTES')
   }
 
   stages {
 
     stage('Tests Automatisés') {
+      agent {
+        docker {
+          image 'maven:3.9-eclipse-temurin-17'
+          args '-v /root/.m2:/root/.m2 -u root'
+        }
+      }
       steps {
         sh 'mvn -B clean test'
       }
@@ -34,6 +37,12 @@ pipeline {
     }
 
     stage('Qualité SonarCloud') {
+      agent {
+        docker {
+          image 'maven:3.9-eclipse-temurin-17'
+          args '-v /root/.m2:/root/.m2 -u root'
+        }
+      }
       steps {
         withSonarQubeEnv('SonarCloud') {
           sh 'mvn -B verify sonar:sonar -s .m2/settings.xml -DskipTests'
@@ -42,6 +51,7 @@ pipeline {
     }
 
     stage('Quality Gate') {
+      agent any
       steps {
         timeout(time: 3, unit: 'MINUTES') {
           waitForQualityGate abortPipeline: false
@@ -50,6 +60,12 @@ pipeline {
     }
 
     stage('Compilation et Packaging') {
+      agent {
+        docker {
+          image 'maven:3.9-eclipse-temurin-17'
+          args '-v /root/.m2:/root/.m2 -u root'
+        }
+      }
       steps {
         sh 'mvn -B clean package -DskipTests'
         archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -57,6 +73,12 @@ pipeline {
     }
 
     stage('Build & Push DockerHub') {
+      agent {
+        docker {
+          image 'docker:27-cli'
+          args '-v /var/run/docker.sock:/var/run/docker.sock -u root'
+        }
+      }
       steps {
         withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USR', passwordVariable: 'DOCKERHUB_PSW')]) {
           sh '''
@@ -74,6 +96,12 @@ pipeline {
       when {
         expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+        }
+      }
       steps {
         withCredentials([
           usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USR', passwordVariable: 'DOCKERHUB_PSW'),
@@ -81,6 +109,7 @@ pipeline {
         ]) {
           sh '''
             set -e
+            apk add --no-cache openssh-client
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
             ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts 2>/dev/null
@@ -108,9 +137,16 @@ pipeline {
       when {
         expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+        }
+      }
       steps {
         sh '''
           set -e
+          apk add --no-cache curl
           chmod +x scripts/validate.sh
           APP_URL="http://${STAGING_HOST}:8080/" RETRIES=30 SLEEP_SECONDS=10 ./scripts/validate.sh
         '''
@@ -121,6 +157,12 @@ pipeline {
       when {
         expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+        }
+      }
       steps {
         input message: "Déployer en PRODUCTION sur ${PROD_HOST} ?", ok: 'Déployer'
         withCredentials([
@@ -129,6 +171,7 @@ pipeline {
         ]) {
           sh '''
             set -e
+            apk add --no-cache openssh-client
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
             ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
@@ -156,9 +199,16 @@ pipeline {
       when {
         expression { return env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'main' }
       }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+        }
+      }
       steps {
         sh '''
           set -e
+          apk add --no-cache curl
           chmod +x scripts/validate.sh
           APP_URL="http://${PROD_HOST}:8080/" RETRIES=30 SLEEP_SECONDS=10 ./scripts/validate.sh
         '''
@@ -168,19 +218,21 @@ pipeline {
 
   post {
     always {
-      script {
-        def status = currentBuild.currentResult
-        def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'N/A'
-        try {
-          withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
-            sh """
-              curl -sS -X POST -H 'Content-type: application/json' \
-                --data '{"text":"*PayMyBuddy CI/CD*\\nStatus: *${status}*\\nJob: ${env.JOB_NAME} #${env.BUILD_NUMBER}\\nBranche: ${branch}\\nURL: ${env.BUILD_URL}"}' \
-                "\$SLACK_WEBHOOK" || true
-            """
+      node('built-in') {
+        script {
+          def status = currentBuild.currentResult
+          def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'N/A'
+          try {
+            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
+              sh """
+                curl -sS -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"*PayMyBuddy CI/CD*\\nStatus: *${status}*\\nJob: ${env.JOB_NAME} #${env.BUILD_NUMBER}\\nBranche: ${branch}\\nURL: ${env.BUILD_URL}"}' \
+                  "\$SLACK_WEBHOOK" || true
+              """
+            }
+          } catch (err) {
+            echo "Notification Slack ignorée: ${err}"
           }
-        } catch (err) {
-          echo "Notification Slack ignorée: ${err}"
         }
       }
     }
