@@ -1,5 +1,4 @@
 pipeline {
-  // Agent léger : images Docker Hub déjà prêtes (évite de builder agent/Dockerfile sur t3.micro)
   agent none
 
   environment {
@@ -8,67 +7,59 @@ pipeline {
     FULL_IMAGE = "${IMAGE_NAME}:${IMAGE_TAG}"
     STAGING_HOST = '56.228.41.32'
     PROD_HOST = '13.60.222.9'
+    // Limite heap JVM pour t3.micro (1 Go RAM)
+    MAVEN_OPTS = '-Xmx384m -XX:MaxMetaspaceSize=128m'
   }
 
   options {
     timestamps()
     disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '10'))
-    timeout(time: 60, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '5'))
+    timeout(time: 45, unit: 'MINUTES')
   }
 
   stages {
 
-    stage('Tests Automatisés') {
+    // Un seul conteneur Maven = 1 pull, moins de RAM
+    stage('Tests + Qualité + Packaging') {
       agent {
         docker {
           image 'maven:3.9-eclipse-temurin-17'
-          args '-v /root/.m2:/root/.m2 -u root'
+          args '-v /root/.m2:/root/.m2 -u root --memory=768m'
         }
       }
-      steps {
-        sh 'mvn -B clean test'
-      }
-      post {
-        always {
-          junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+      stages {
+        stage('Tests Automatisés') {
+          steps {
+            // Tests unitaires seulement (*Test), exclure les IT trop lourds
+            sh 'mvn -B -Dtest="*Test" -DfailIfNoTests=false clean test'
+          }
+          post {
+            always {
+              junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+            }
+          }
         }
-      }
-    }
-
-    stage('Qualité SonarCloud') {
-      agent {
-        docker {
-          image 'maven:3.9-eclipse-temurin-17'
-          args '-v /root/.m2:/root/.m2 -u root'
+        stage('Qualité SonarCloud') {
+          steps {
+            withSonarQubeEnv('SonarCloud') {
+              sh 'mvn -B verify sonar:sonar -s .m2/settings.xml -DskipTests'
+            }
+          }
         }
-      }
-      steps {
-        withSonarQubeEnv('SonarCloud') {
-          sh 'mvn -B verify sonar:sonar -s .m2/settings.xml -DskipTests'
+        stage('Quality Gate') {
+          steps {
+            timeout(time: 2, unit: 'MINUTES') {
+              waitForQualityGate abortPipeline: false
+            }
+          }
         }
-      }
-    }
-
-    stage('Quality Gate') {
-      agent any
-      steps {
-        timeout(time: 3, unit: 'MINUTES') {
-          waitForQualityGate abortPipeline: false
+        stage('Compilation et Packaging') {
+          steps {
+            sh 'mvn -B package -DskipTests'
+            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+          }
         }
-      }
-    }
-
-    stage('Compilation et Packaging') {
-      agent {
-        docker {
-          image 'maven:3.9-eclipse-temurin-17'
-          args '-v /root/.m2:/root/.m2 -u root'
-        }
-      }
-      steps {
-        sh 'mvn -B clean package -DskipTests'
-        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
       }
     }
 
