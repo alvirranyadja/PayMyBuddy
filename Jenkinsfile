@@ -7,8 +7,9 @@ pipeline {
     FULL_IMAGE = "${IMAGE_NAME}:${IMAGE_TAG}"
     STAGING_HOST = '56.228.41.32'
     PROD_HOST = '13.60.222.9'
-    // Limite heap JVM pour t3.micro (1 Go RAM)
-    MAVEN_OPTS = '-Xmx384m -XX:MaxMetaspaceSize=128m'
+    // Heap adapté t3.small (2 Go) — Sonar a besoin de plus que Maven seul
+    MAVEN_OPTS = '-Xmx768m -XX:MaxMetaspaceSize=256m'
+    SONAR_SCANNER_OPTS = '-Xmx1024m'
   }
 
   options {
@@ -25,7 +26,7 @@ pipeline {
       agent {
         docker {
           image 'maven:3.9-eclipse-temurin-17'
-          args '-v /root/.m2:/root/.m2 -u root --memory=768m'
+          args '-v /root/.m2:/root/.m2 -u root --memory=1536m'
         }
       }
       stages {
