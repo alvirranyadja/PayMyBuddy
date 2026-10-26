@@ -104,12 +104,16 @@ pipeline {
             apk add --no-cache openssh-client
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
-            ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+            echo "Deploy staging: ${SSH_USER}@${STAGING_HOST}"
+            ssh-keyscan -T 10 -H "$STAGING_HOST" >> ~/.ssh/known_hosts || {
+              echo "ERREUR: ssh-keyscan a échoué. Vérifie que staging est UP et que le SG autorise SSH depuis Jenkins (51.20.191.244)."
+              exit 1
+            }
 
-            ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${STAGING_HOST} "mkdir -p ~/paymybuddy-deploy"
-            scp deploy/docker-compose.yml ${SSH_USER}@${STAGING_HOST}:~/paymybuddy-deploy/docker-compose.yml
+            ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 ${SSH_USER}@${STAGING_HOST} "mkdir -p ~/paymybuddy-deploy"
+            scp -o ConnectTimeout=15 deploy/docker-compose.yml ${SSH_USER}@${STAGING_HOST}:~/paymybuddy-deploy/docker-compose.yml
 
-            ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${STAGING_HOST} "
+            ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 ${SSH_USER}@${STAGING_HOST} "
               set -e
               cd ~/paymybuddy-deploy
               echo '${DOCKERHUB_PSW}' | docker login -u '${DOCKERHUB_USR}' --password-stdin
@@ -166,12 +170,16 @@ pipeline {
             apk add --no-cache openssh-client
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
             cp "$SSH_KEY" ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
-            ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+            echo "Deploy prod: ${SSH_USER}@${PROD_HOST}"
+            ssh-keyscan -T 10 -H "$PROD_HOST" >> ~/.ssh/known_hosts || {
+              echo "ERREUR: ssh-keyscan a échoué. Vérifie que prod est UP et que le SG autorise SSH depuis Jenkins (51.20.191.244)."
+              exit 1
+            }
 
-            ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${PROD_HOST} "mkdir -p ~/paymybuddy-deploy"
-            scp deploy/docker-compose.yml ${SSH_USER}@${PROD_HOST}:~/paymybuddy-deploy/docker-compose.yml
+            ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 ${SSH_USER}@${PROD_HOST} "mkdir -p ~/paymybuddy-deploy"
+            scp -o ConnectTimeout=15 deploy/docker-compose.yml ${SSH_USER}@${PROD_HOST}:~/paymybuddy-deploy/docker-compose.yml
 
-            ssh -o StrictHostKeyChecking=yes ${SSH_USER}@${PROD_HOST} "
+            ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 ${SSH_USER}@${PROD_HOST} "
               set -e
               cd ~/paymybuddy-deploy
               echo '${DOCKERHUB_PSW}' | docker login -u '${DOCKERHUB_USR}' --password-stdin
