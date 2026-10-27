@@ -6,9 +6,9 @@ Pipeline Jenkins pour l’application Spring Boot [PayMyBuddy](https://github.co
 
 | Élément | Valeur |
 |---------|--------|
-| Jenkins | http://16.171.8.117:8080 |
+| Jenkins | http://51.20.191.244:8080 |
 | Staging | `56.228.41.32:8080` |
-| Prod | `13.60.222.9:8080` |
+| Prod | IP publique EC2 (change après Stop/Start sans Elastic IP) |
 | Docker Hub | `alvirra/paymybuddy` |
 | SonarCloud | org/key `alvirranyadja` |
 | Credentials | `dockerhub-credentials`, `ssh-deploy`, `sonar-token`, `slack-webhook` |
@@ -71,8 +71,42 @@ git push origin main
 
 ## URLs après déploiement
 
-- Staging : http://56.228.41.32:8080  
-- Prod : http://13.60.222.9:8080  
+- Staging : http://56.228.41.32:8080/login  
+- Prod : `http://<IP-publique-prod>:8080/login` (voir EC2 → prod-server)  
+
+- Jenkins job : http://51.20.191.244:8080/job/paymybuddy-cicd/  
+
+## Preuves — Build #6 SUCCESS
+
+Pipeline validée de bout en bout (tests → Sonar → Docker Hub → Staging → Prod → Slack).
+
+### Jenkins build #6
+
+![Jenkins paymybuddy-cicd #6 SUCCESS](docs/preuves/05-jenkins-build6.png)
+
+### Tests automatisés (51/51)
+
+![Jenkins 51 tests OK](docs/preuves/07-jenkins-tests51.png)
+
+### Notification Slack
+
+![Slack SUCCESS paymybuddy-cicd #6](docs/preuves/08-slack-success.png)
+
+### Infrastructure AWS (EC2)
+
+![EC2 Jenkins staging prod](docs/preuves/04-aws-ec2.png)
+
+### Application Staging — login
+
+![Staging login](docs/preuves/02-staging-login.png)
+
+### Application Staging — home (utilisateur connecté)
+
+![Staging home](docs/preuves/03-staging-home.png)
+
+### Application Production — login
+
+![Prod login](docs/preuves/01-prod-login.png)
 
 ## Dépannage
 
@@ -86,7 +120,7 @@ git push origin main
 
 ### Docker CLI dans Jenkins (obligatoire)
 
-Sur l’**EC2 Jenkins** (`16.171.8.117`), le conteneur doit avoir le CLI Docker + le socket :
+Sur l’**EC2 Jenkins** (`51.20.191.244`), le conteneur doit avoir le CLI Docker + le socket :
 
 ```bash
 JENKINS_CTR=$(sudo docker ps --format '{{.Names}}' | grep -i jenkins | head -1)
