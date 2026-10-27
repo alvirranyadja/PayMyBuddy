@@ -72,7 +72,7 @@ git push origin main
 ## URLs après déploiement
 
 - Staging : http://56.228.41.32:8080/login  
-- Prod : `http://<IP-publique-prod>:8080/login` (voir EC2 → prod-server)  
+- Prod : `http://<IP-publique-prod>:8080/login`  
 
 - Jenkins job : http://51.20.191.244:8080/job/paymybuddy-cicd/  
 
